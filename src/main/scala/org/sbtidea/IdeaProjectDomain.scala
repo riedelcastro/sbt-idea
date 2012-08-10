@@ -28,11 +28,16 @@ case class Directories(sources: Seq[File], resources: Seq[File], outDir: File) {
   def addRes (moreResources: Seq[File]): Directories = Directories(sources, resources ++ moreResources, outDir)
 }
 
+case class ArtifactId(name:String, version:String, organization:String, scalaVersion:String) {
+  def toFullName = organization + "_" + name + "_" + scalaVersion + "_" + version
+}
+
 case class SubProjectInfo(baseDir: File, name: String, dependencyProjects: List[String], classpathDeps: Seq[(File, Seq[File])], compileDirs: Directories,
                           testDirs: Directories, libraries: Seq[IdeaModuleLibRef], scalaInstance: ScalaInstance,
                           ideaGroup: Option[String], webAppPath: Option[File], basePackage: Option[String],
                           packagePrefix: Option[String],
-                          extraFacets: NodeSeq)
+                          extraFacets: NodeSeq,
+                          artifactId:ArtifactId)
 
 case class IdeaProjectInfo(baseDir: File, name: String, childProjects: List[SubProjectInfo], ideaLibs: List[IdeaLibrary])
 

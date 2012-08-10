@@ -37,7 +37,7 @@ object SbtIdeaPlugin extends Plugin {
 
   private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc).*
 
-  private lazy val ideaCommand = Command("gen-idea")(_ => args)(doCommand)
+  private lazy val ideaCommand = Command("gen-idea-rc")(_ => args)(doCommand)
 
   def doCommand(state: State, args: Seq[String]): State = {
     val provider = state.configuration.provider
@@ -79,9 +79,11 @@ object SbtIdeaPlugin extends Plugin {
     }
 
     val allProjectIds = projectList.values.map(_.id).toSet
-    val subProjects = projectList.collect {
+    val subProjectsRaw = projectList.collect {
       case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds)
     }.toList
+
+    val subProjects = replaceLibDependenciesWithModuleDependencies(subProjectsRaw)
 
     val scalaInstances = subProjects.map(_.scalaInstance).distinct
     val scalaLibs = (sbtInstance :: scalaInstances).map(toIdeaLib(_))
@@ -139,6 +141,17 @@ object SbtIdeaPlugin extends Plugin {
     state
   }
 
+  def replaceLibDependenciesWithModuleDependencies(subprojects:List[SubProjectInfo]) = {
+    val name2project = subprojects.groupBy(_.artifactId.toFullName)
+    for (sub <- subprojects) yield {
+      val libs = sub.libraries
+      val (replaceable,nonreplacable) = libs.partition(l => name2project.isDefinedAt(l.library.name))
+      val subprojectsToUseInstead = replaceable.map(l => name2project(l.library.name).head.name).toList
+      val newSubProject = sub.copy(libraries = nonreplacable,dependencyProjects = subprojectsToUseInstead)
+      newSubProject
+    }
+  }
+
   def projectData(projectRef: ProjectRef, project: ResolvedProject, buildStruct: BuildStructure,
                   state: State, args: Seq[String], allProjectIds: Set[String]): SubProjectInfo = {
 
@@ -162,6 +175,13 @@ object SbtIdeaPlugin extends Plugin {
     // The SBT project name and id can be different, we choose the id as the
     // IDEA project name. It must be consistent with the value of SubProjectInfo#dependencyProjects.
     val projectName = project.id
+
+    val artifactId = ArtifactId(
+      name = setting(Keys.artifact,"Artifact not defined").name,
+      version = setting(Keys.version,"Version not defined"),
+      organization = setting(Keys.organization,"Org not defined"),
+      scalaVersion = setting(Keys.scalaVersion,"Scala version not defined")
+    )
 
     logger(state).info("Trying to create an Idea module " + projectName)
 
@@ -225,12 +245,16 @@ object SbtIdeaPlugin extends Plugin {
     val packagePrefix = setting(ideaPackagePrefix, "missing package prefix")
     val extraFacets = settingWithDefault(ideaExtraFacets, NodeSeq.Empty)
     def isAggregate(p: String) = allProjectIds.toSeq.contains(p)
+
+
     val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap { dep =>
       Seq(Compile, Test) map { scope =>
         (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
       }
     }
     SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
-      testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets)
+      testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets,
+      artifactId
+    )
   }
 }
