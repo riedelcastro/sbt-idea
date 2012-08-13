@@ -16,7 +16,7 @@ object SbtIdeaPlugin extends Plugin {
   val ideaIgnoreModule = SettingKey[Boolean]("idea-ignore-module")
   val ideaBasePackage = SettingKey[Option[String]]("idea-base-package", "The base package configured in the Scala Facet, used by IDEA to generated nested package clauses. For example, com.acme.wibble")
   val ideaPackagePrefix = SettingKey[Option[String]]("idea-package-prefix",
-    "The package prefix for source directories.")
+                                                     "The package prefix for source directories.")
   val ideaSourcesClassifiers = SettingKey[Seq[String]]("idea-sources-classifiers")
   val ideaJavadocsClassifiers = SettingKey[Seq[String]]("idea-javadocs-classifiers")
   val ideaExtraFacets = SettingKey[NodeSeq]("idea-extra-facets")
@@ -61,9 +61,8 @@ object SbtIdeaPlugin extends Plugin {
           aggregates match {
             case Nil => List.empty
             case ref :: tail => {
-              Project.getProject(ref, buildStruct).map {
-                subProject =>
-                  (ref -> subProject) +: getProjectList(subProject) ++: processAggregates(tail)
+              Project.getProject(ref, buildStruct).map{subProject =>
+                (ref -> subProject) +: getProjectList(subProject) ++: processAggregates(tail)
               }.getOrElse(processAggregates(tail))
             }
           }
@@ -138,7 +137,7 @@ object SbtIdeaPlugin extends Plugin {
       val buildDefinitionDir = new File(subProj.baseDir, "project")
       if (buildDefinitionDir.exists()) {
         val sbtDef = new SbtProjectDefinitionIdeaModuleDescriptor(subProj.name, imlDir, subProj.baseDir,
-          buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, logger(state))
+         buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, logger(state))
         sbtDef.save()
       }
     }
@@ -245,8 +244,7 @@ object SbtIdeaPlugin extends Plugin {
     val testDirectories: Directories = directoriesFor(Configurations.Test).addSrc(sourceDirectoriesFor(Configurations.IntegrationTest)).addRes(resourceDirectoriesFor(Configurations.IntegrationTest))
     val librariesExtractor = new SbtIdeaModuleMapping.LibrariesExtractor(buildStruct, state, projectRef,
       logger(state), scalaInstance,
-      withClassifiers = if (args.contains(NoClassifiers)) None
-      else {
+      withClassifiers = if (args.contains(NoClassifiers)) None else {
         Some((setting(ideaSourcesClassifiers, "Missing idea-sources-classifiers"), setting(ideaJavadocsClassifiers, "Missing idea-javadocs-classifiers")))
       }
     )
@@ -254,14 +252,10 @@ object SbtIdeaPlugin extends Plugin {
     val packagePrefix = setting(ideaPackagePrefix, "missing package prefix")
     val extraFacets = settingWithDefault(ideaExtraFacets, NodeSeq.Empty)
     def isAggregate(p: String) = allProjectIds.toSeq.contains(p)
-
-
-    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap {
-      dep =>
-        Seq(Compile, Test) map {
-          scope =>
-            (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
-        }
+    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap { dep =>
+      Seq(Compile, Test) map { scope =>
+        (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
+      }
     }
     SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
       testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets,
