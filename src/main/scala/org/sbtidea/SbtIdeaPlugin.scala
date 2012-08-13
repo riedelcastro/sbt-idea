@@ -162,20 +162,20 @@ object SbtIdeaPlugin extends Plugin {
   def projectData(projectRef: ProjectRef, project: ResolvedProject, buildStruct: BuildStructure,
                   state: State, args: Seq[String], allProjectIds: Set[String]): SubProjectInfo = {
 
-    def optionalSetting[A](key: ScopedSetting[A], pr: ProjectRef = projectRef): Option[A] = key in pr get buildStruct.data
+    def optionalSetting[A](key: ScopedSetting[A], pr: ProjectRef = projectRef) : Option[A] = key in pr get buildStruct.data
 
     def logErrorAndFail(errorMessage: String): Nothing = {
       logger(state).error(errorMessage);
       throw new IllegalArgumentException()
     }
 
-    def setting[A](key: ScopedSetting[A], errorMessage: => String, pr: ProjectRef = projectRef): A = {
+    def setting[A](key: ScopedSetting[A], errorMessage: => String, pr: ProjectRef = projectRef) : A = {
       optionalSetting(key, pr) getOrElse {
         logErrorAndFail(errorMessage)
       }
     }
 
-    def settingWithDefault[A](key: ScopedSetting[A], defaultValue: => A): A = {
+    def settingWithDefault[A](key: ScopedSetting[A], defaultValue: => A) : A = {
       optionalSetting(key) getOrElse defaultValue
     }
 
