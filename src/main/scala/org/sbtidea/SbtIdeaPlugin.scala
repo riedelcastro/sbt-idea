@@ -16,7 +16,7 @@ object SbtIdeaPlugin extends Plugin {
   val ideaIgnoreModule = SettingKey[Boolean]("idea-ignore-module")
   val ideaBasePackage = SettingKey[Option[String]]("idea-base-package", "The base package configured in the Scala Facet, used by IDEA to generated nested package clauses. For example, com.acme.wibble")
   val ideaPackagePrefix = SettingKey[Option[String]]("idea-package-prefix",
-                                                     "The package prefix for source directories.")
+    "The package prefix for source directories.")
   val ideaSourcesClassifiers = SettingKey[Seq[String]]("idea-sources-classifiers")
   val ideaJavadocsClassifiers = SettingKey[Seq[String]]("idea-javadocs-classifiers")
   val ideaExtraFacets = SettingKey[NodeSeq]("idea-extra-facets")
@@ -33,11 +33,12 @@ object SbtIdeaPlugin extends Plugin {
 
   private val NoClassifiers = "no-classifiers"
   private val SbtClassifiers = "sbt-classifiers"
+  private val ReplaceLibsByModules = "replace-libs"
   private val NoFsc = "no-fsc"
 
-  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc).*
+  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc | Space ~> ReplaceLibsByModules).*
 
-  private lazy val ideaCommand = Command("gen-idea-rc")(_ => args)(doCommand)
+  private lazy val ideaCommand = Command("gen-idea")(_ => args)(doCommand)
 
   def doCommand(state: State, args: Seq[String]): State = {
     val provider = state.configuration.provider
@@ -60,8 +61,9 @@ object SbtIdeaPlugin extends Plugin {
           aggregates match {
             case Nil => List.empty
             case ref :: tail => {
-              Project.getProject(ref, buildStruct).map{subProject =>
-                (ref -> subProject) +: getProjectList(subProject) ++: processAggregates(tail)
+              Project.getProject(ref, buildStruct).map {
+                subProject =>
+                  (ref -> subProject) +: getProjectList(subProject) ++: processAggregates(tail)
               }.getOrElse(processAggregates(tail))
             }
           }
@@ -83,7 +85,10 @@ object SbtIdeaPlugin extends Plugin {
       case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds)
     }.toList
 
-    val subProjects = replaceLibDependenciesWithModuleDependencies(subProjectsRaw)
+    val subProjects = if (args.contains(ReplaceLibsByModules))
+      replaceLibDependenciesWithModuleDependencies(state, subProjectsRaw)
+    else
+      subProjectsRaw
 
     val scalaInstances = subProjects.map(_.scalaInstance).distinct
     val scalaLibs = (sbtInstance :: scalaInstances).map(toIdeaLib(_))
@@ -133,7 +138,7 @@ object SbtIdeaPlugin extends Plugin {
       val buildDefinitionDir = new File(subProj.baseDir, "project")
       if (buildDefinitionDir.exists()) {
         val sbtDef = new SbtProjectDefinitionIdeaModuleDescriptor(subProj.name, imlDir, subProj.baseDir,
-         buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, logger(state))
+          buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, logger(state))
         sbtDef.save()
       }
     }
@@ -141,13 +146,16 @@ object SbtIdeaPlugin extends Plugin {
     state
   }
 
-  def replaceLibDependenciesWithModuleDependencies(subprojects:List[SubProjectInfo]) = {
+  def replaceLibDependenciesWithModuleDependencies(state:State, subprojects: List[SubProjectInfo]) = {
     val name2project = subprojects.groupBy(_.artifactId.toFullName)
     for (sub <- subprojects) yield {
       val libs = sub.libraries
-      val (replaceable,nonreplacable) = libs.partition(l => name2project.isDefinedAt(l.library.name))
+      val (replaceable, nonreplacable) = libs.partition(l => name2project.isDefinedAt(l.library.name))
       val subprojectsToUseInstead = replaceable.map(l => name2project(l.library.name).head.name).toList
-      val newSubProject = sub.copy(libraries = nonreplacable,dependencyProjects = subprojectsToUseInstead)
+      val newSubProject = sub.copy(libraries = nonreplacable, dependencyProjects = subprojectsToUseInstead)
+      for (lib <- replaceable) {
+        logger(state).info("Replacing library %s with module %s".format(lib.library.name,name2project(lib.library.name).head.name))
+      }
       newSubProject
     }
   }
@@ -155,20 +163,20 @@ object SbtIdeaPlugin extends Plugin {
   def projectData(projectRef: ProjectRef, project: ResolvedProject, buildStruct: BuildStructure,
                   state: State, args: Seq[String], allProjectIds: Set[String]): SubProjectInfo = {
 
-    def optionalSetting[A](key: ScopedSetting[A], pr: ProjectRef = projectRef) : Option[A] = key in pr get buildStruct.data
+    def optionalSetting[A](key: ScopedSetting[A], pr: ProjectRef = projectRef): Option[A] = key in pr get buildStruct.data
 
     def logErrorAndFail(errorMessage: String): Nothing = {
       logger(state).error(errorMessage);
       throw new IllegalArgumentException()
     }
 
-    def setting[A](key: ScopedSetting[A], errorMessage: => String, pr: ProjectRef = projectRef) : A = {
+    def setting[A](key: ScopedSetting[A], errorMessage: => String, pr: ProjectRef = projectRef): A = {
       optionalSetting(key, pr) getOrElse {
         logErrorAndFail(errorMessage)
       }
     }
 
-    def settingWithDefault[A](key: ScopedSetting[A], defaultValue: => A) : A = {
+    def settingWithDefault[A](key: ScopedSetting[A], defaultValue: => A): A = {
       optionalSetting(key) getOrElse defaultValue
     }
 
@@ -177,10 +185,10 @@ object SbtIdeaPlugin extends Plugin {
     val projectName = project.id
 
     val artifactId = ArtifactId(
-      name = setting(Keys.artifact,"Artifact not defined").name,
-      version = setting(Keys.version,"Version not defined"),
-      organization = setting(Keys.organization,"Org not defined"),
-      scalaVersion = setting(Keys.scalaVersion,"Scala version not defined")
+      name = setting(Keys.artifact, "Artifact not defined").name,
+      version = setting(Keys.version, "Version not defined"),
+      organization = setting(Keys.organization, "Org not defined"),
+      scalaVersion = setting(Keys.scalaVersion, "Scala version not defined")
     )
 
     logger(state).info("Trying to create an Idea module " + projectName)
@@ -237,7 +245,8 @@ object SbtIdeaPlugin extends Plugin {
     val testDirectories: Directories = directoriesFor(Configurations.Test).addSrc(sourceDirectoriesFor(Configurations.IntegrationTest)).addRes(resourceDirectoriesFor(Configurations.IntegrationTest))
     val librariesExtractor = new SbtIdeaModuleMapping.LibrariesExtractor(buildStruct, state, projectRef,
       logger(state), scalaInstance,
-      withClassifiers = if (args.contains(NoClassifiers)) None else {
+      withClassifiers = if (args.contains(NoClassifiers)) None
+      else {
         Some((setting(ideaSourcesClassifiers, "Missing idea-sources-classifiers"), setting(ideaJavadocsClassifiers, "Missing idea-javadocs-classifiers")))
       }
     )
@@ -247,10 +256,12 @@ object SbtIdeaPlugin extends Plugin {
     def isAggregate(p: String) = allProjectIds.toSeq.contains(p)
 
 
-    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap { dep =>
-      Seq(Compile, Test) map { scope =>
-        (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
-      }
+    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap {
+      dep =>
+        Seq(Compile, Test) map {
+          scope =>
+            (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
+        }
     }
     SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
       testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets,
