@@ -151,7 +151,7 @@ object SbtIdeaPlugin extends Plugin {
       val libs = sub.libraries
       val (replaceable, nonreplacable) = libs.partition(l => name2project.isDefinedAt(l.library.name))
       val subprojectsToUseInstead = replaceable.map(l => name2project(l.library.name).head.name).toList
-      val newSubProject = sub.copy(libraries = nonreplacable, dependencyProjects = subprojectsToUseInstead)
+      val newSubProject = sub.copy(libraries = nonreplacable, dependencyProjects = sub.dependencyProjects ++ subprojectsToUseInstead)
       for (lib <- replaceable) {
         logger(state).info("Replacing library %s with module %s".format(lib.library.name,name2project(lib.library.name).head.name))
       }
