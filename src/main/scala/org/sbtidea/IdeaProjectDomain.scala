@@ -30,7 +30,7 @@ case class Directories(sources: Seq[File], resources: Seq[File], outDir: File) {
 }
 
 case class ArtifactId(name:String, version:String, organization:String, scalaVersion:String) {
-  def toFullName = organization + "_" + name + "_" + scalaVersion + "_" + version
+  def toFullName = "SBT: %s:%s_%s:%s".format(organization,name,scalaVersion,version)
 }
 
 case class SubProjectInfo(baseDir: File, name: String, dependencyProjects: List[String], classpathDeps: Seq[(File, Seq[File])], compileDirs: Directories,

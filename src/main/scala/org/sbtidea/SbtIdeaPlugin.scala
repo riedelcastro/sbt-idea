@@ -40,7 +40,7 @@ object SbtIdeaPlugin extends Plugin {
   private val NoTypeHighlighting = "no-type-highlighting"
   private val NoSbtBuildModule = "no-sbt-build-module"
 
-  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc | Space ~> NoTypeHighlighting | Space ~> NoSbtBuildModule).*
+  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc | Space ~> NoTypeHighlighting | Space ~> NoSbtBuildModule | Space ~> ReplaceLibsByModules).*
 
   private lazy val ideaCommand = Command("gen-idea")(_ => args)(doCommand)
 
@@ -154,7 +154,9 @@ object SbtIdeaPlugin extends Plugin {
   def replaceLibDependenciesWithModuleDependencies(state:State, subprojects: List[SubProjectInfo]) = {
     val name2project = subprojects.groupBy(_.artifactId.toFullName)
     for (sub <- subprojects) yield {
+      state.log.info(sub.artifactId.toString)
       val libs = sub.libraries
+      state.log.info(libs.map(_.library.name).mkString("  ","\n  ",""))
       val (replaceable, nonreplacable) = libs.partition(l => name2project.isDefinedAt(l.library.name))
       val subprojectsToUseInstead = replaceable.map(l => name2project(l.library.name).head.name).toList
       val newSubProject = sub.copy(libraries = nonreplacable, dependencyProjects = sub.dependencyProjects ++ subprojectsToUseInstead)
