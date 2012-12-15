@@ -10,3 +10,8 @@ project/boot*
 project/plugins/project
 ctags
 idea.iml
+.classpath
+.project
+.cache
+.settings
+project/privateplugins.sbt

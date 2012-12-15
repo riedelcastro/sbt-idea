@@ -3,16 +3,17 @@
     <facet name="Scala" type="scala">
       <configuration>
         <option name="compilerLibraryLevel" value="Project"></option>
-        <option name="compilerLibraryName" value="scala-2.9.1"></option>
+        <option name="compilerLibraryName" value="SBT: scala:2.9.2"></option>
         <option name="fsc" value="true" />
         <option name="deprecationWarnings" value="true" />
         <option name="uncheckedWarnings" value="true" />
+        <option name="compilerOptions" value="-unchecked -deprecation"/>
       </configuration>
     </facet>
   </component>
   <component name="NewModuleRootManager" inherit-compiler-output="false">
-    <output url="file://$MODULE_DIR$/../target/scala-2.9.1/classes"></output>
-    <output-test url="file://$MODULE_DIR$/../target/scala-2.9.1/test-classes"></output-test>
+    <output url="file://$MODULE_DIR$/../target/scala-2.9.2/classes"></output>
+    <output-test url="file://$MODULE_DIR$/../target/scala-2.9.2/test-classes"></output-test>
     <exclude-output></exclude-output>
     <content url="file:///tmp/sbt_/simple-project">
       <sourceFolder url="file://$MODULE_DIR$/../src/main/scala" isTestSource="false"></sourceFolder>
@@ -25,7 +26,13 @@
     </content>
     <orderEntry type="inheritedJdk"></orderEntry>
     <orderEntry type="sourceFolder" forTests="false"></orderEntry>
-    <orderEntry level="project" name="org.scala-lang_scala-library_2.9.1" type="library"></orderEntry>
-    <orderEntry level="project" name="junit_junit_4.8.2" type="library"></orderEntry>
+    <orderEntry level="project" name="SBT: org.scala-lang:scala-library:2.9.2" type="library"></orderEntry>
+    <orderEntry level="project" name="SBT: junit:junit:4.8.2" type="library"></orderEntry>
+    <orderEntry scope="PROVIDED" level="project" name="SBT: javax.servlet:servlet-api:2.5:provided" type="library"></orderEntry>
+    <orderEntry scope="TEST" level="project" name="SBT: org.eclipse.jetty:jetty-server:7.0.0.v20091005:test" type="library"></orderEntry>
+    <orderEntry scope="TEST" level="project" name="SBT: org.eclipse.jetty:jetty-continuation:7.0.0.v20091005:test" type="library"></orderEntry>
+    <orderEntry scope="TEST" level="project" name="SBT: org.eclipse.jetty:jetty-http:7.0.0.v20091005:test" type="library"></orderEntry>
+    <orderEntry scope="TEST" level="project" name="SBT: org.eclipse.jetty:jetty-io:7.0.0.v20091005:test" type="library"></orderEntry>
+    <orderEntry scope="TEST" level="project" name="SBT: org.eclipse.jetty:jetty-util:7.0.0.v20091005:test" type="library"></orderEntry>
   </component>
 </module>

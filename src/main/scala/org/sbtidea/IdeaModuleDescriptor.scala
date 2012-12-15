@@ -15,37 +15,19 @@ import xml.{UnprefixedAttribute, Node, Text}
 class IdeaModuleDescriptor(val imlDir: File, projectRoot: File, val project: SubProjectInfo, val env: IdeaProjectEnvironment, val userEnv: IdeaUserEnvironment, val log: Logger) extends SaveableXml {
   val path = String.format("%s/%s.iml", imlDir.getAbsolutePath, project.name)
 
-  def relativePath(file: File) = {
-    IO.relativize(projectRoot, file.getCanonicalFile).map ("$MODULE_DIR$/../" + _).getOrElse(file.getCanonicalPath)
-  }
+  def relativePath(file: File) = IOUtils.relativePath(projectRoot, file, "$MODULE_DIR$/../")
 
-  val sources = project.compileDirs.sources.map(relativePath(_))
-  val resources = project.compileDirs.resources.map(relativePath(_))
-  val testSources = project.testDirs.sources.map(relativePath(_))
-  val testResources = project.testDirs.resources.map(relativePath(_))
+  val sources = project.compileDirs.sources.map(relativePath)
+  val resources = project.compileDirs.resources.map(relativePath)
+  val testSources = project.testDirs.sources.map(relativePath)
+  val testResources = project.testDirs.resources.map(relativePath)
 
   def content: Node = {
     <module type="JAVA_MODULE" version="4">
       <component name="FacetManager">
-        <facet type="scala" name="Scala">
-          <configuration>
-            {
-              project.basePackage.map(bp => <option name="basePackage" value={bp} />).getOrElse(scala.xml.Null)
-            }
-            <option name="compilerLibraryLevel" value="Project" />
-            <option name="compilerLibraryName" value={ "scala-" + project.scalaInstance.version } />
-            {
-              if (env.useProjectFsc) <option name="fsc" value="true" />
-            }
-            {
-              if (env.scalacOptions.contains("-deprecation")) <option name="deprecationWarnings" value="true" />
-            }
-            {
-              if (env.scalacOptions.contains("-unchecked")) <option name="uncheckedWarnings" value="true" />
-            }
-          </configuration>
-        </facet>
-        { if (project.webAppPath.isDefined && userEnv.webFacet == true) webFacet() else scala.xml.Null }
+        { if (project.includeScalaFacet) scalaFacet else scala.xml.Null }
+        { (for (wap <- project.webAppPath if userEnv.webFacet) yield webFacet(relativePath(wap))).getOrElse(scala.xml.Null) }
+        { project.androidSupport.facet }
         { project.extraFacets }
       </component>
       <component name="NewModuleRootManager" inherit-compiler-output={env.projectOutputPath.isDefined.toString}>
@@ -63,13 +45,13 @@ class IdeaModuleDescriptor(val imlDir: File, projectRoot: File, val project: Sub
           { testResources.map(sourceFolder(_, true, project.packagePrefix)) }
           {
 
-            def dontExcludeManagedSources(toExclude:File):Seq[File] = {
+          val managed = project.compileDirs.sources ++ project.testDirs.sources
+
+          def dontExcludeManagedSources(toExclude:File):Seq[File] = {
 
               def isParent(f:File):Boolean = {
                 f == toExclude || (f != null && isParent(f.getParentFile))
               }
-
-              val managed = project.compileDirs.sources ++ project.testDirs.sources
               val dontExclude = managed.exists(isParent)
 
               if(dontExclude)
@@ -78,8 +60,8 @@ class IdeaModuleDescriptor(val imlDir: File, projectRoot: File, val project: Sub
                 Seq(toExclude)
             }
 
-            env.excludedFolders.split(",").toList.map(_.trim)
-              .map(entry => new File(project.baseDir, entry))
+            env.excludedFolders
+              .map(entry => new File(project.baseDir, entry.trim))
               .flatMap(dontExcludeManagedSources)
               .sortBy(_.getName).map { exclude =>
               log.info(String.format("Excluding folder %s\n", exclude))
@@ -101,11 +83,14 @@ class IdeaModuleDescriptor(val imlDir: File, projectRoot: File, val project: Sub
             case _ => xml.Null
           }*/ xml.Null
         }
-        <orderEntry type="inheritedJdk"/>
+        {
+          if (project.androidSupport.isAndroidProject) project.androidSupport.moduleJdk
+          else <orderEntry type="inheritedJdk"/>
+        }
         <orderEntry type="sourceFolder" forTests="false"/>
         {
         // what about j.extraAttributes.get("e:docUrl")?
-        project.libraries.map(ref => {
+        promoteTestEvictors(project.libraries).map(ref => {
           val orderEntry = <orderEntry type="library" name={ ref.library.name } level="project"/>
           ref.config match {
                 case IdeaLibrary.CompileScope => orderEntry
@@ -152,16 +137,62 @@ class IdeaModuleDescriptor(val imlDir: File, projectRoot: File, val project: Sub
                   packagePrefix={pkg} />
   }
 
-  def webFacet(): Node = {
+  def scalaFacet: Node = {
+    <facet type="scala" name="Scala">
+      <configuration>
+        {
+          project.basePackage.map(bp => <option name="basePackage" value={bp} />).getOrElse(scala.xml.Null)
+        }
+        <option name="compilerLibraryLevel" value="Project" />
+        <option name="compilerLibraryName" value={ SbtIdeaModuleMapping.toIdeaLib(project.scalaInstance).name } />
+        {
+          if (env.useProjectFsc) <option name="fsc" value="true" />
+        }
+        {
+          if (project.scalacOptions.contains("-deprecation")) <option name="deprecationWarnings" value="true" />
+        }
+        {
+          if (project.scalacOptions.contains("-unchecked")) <option name="uncheckedWarnings" value="true" />
+        }
+        <option name="compilerOptions" value={ project.scalacOptions.mkString(" ") } />
+      </configuration>
+    </facet>
+  }
+
+  def webFacet(relativeWebAppPath: String): Node =
     <facet type="web" name="Web">
       <configuration>
         <descriptors>
-          <deploymentDescriptor name="web.xml" url={String.format("file://%s/WEB-INF/web.xml", relativePath(project.webAppPath.get))} />
+          <deploymentDescriptor name="web.xml" url={String.format("file://%s/WEB-INF/web.xml", relativeWebAppPath)}/>
         </descriptors>
         <webroots>
-          <root url={String.format("file://%s", relativePath(project.webAppPath.get))} relative="/" />
+          <root url={String.format("file://%s", relativeWebAppPath)} relative="/"/>
         </webroots>
       </configuration>
     </facet>
+
+  /**
+   * SBT allows different versions of the same library in different scopes, evicting runtime/compile dependencies
+   * out of their scopes if a newer one is found in test when compiling/running tests, while still maintaining
+   * the order as defined in the build configuration. IDEA doesn't support this eviction.  We fake it by
+   * detecting evictors, and moving them up in the classpath to just before the evictees.
+   */
+  def promoteTestEvictors(libraries: Seq[IdeaModuleLibRef]) = {
+    val evictions = for {
+      (evictionId, libs) <- libraries.groupBy(_.library.evictionId) if libs.size > 1
+      testLib <- libs.find(_.config == IdeaLibrary.TestScope)
+    } yield
+      testLib -> libs.filterNot(_ == testLib)
+
+    evictions.foldLeft(libraries){(libs, e) =>
+      val (evictor, evictees) = e
+      val evictorIndex = libs.indexOf(evictor)
+      val firstEvicteeIndex = libs.indexWhere(l => evictees.contains(l))
+      if (evictorIndex > firstEvicteeIndex) {
+        (libs.take(firstEvicteeIndex) :+ evictor) ++ libs.takeRight(libs.size - firstEvicteeIndex).filterNot(_ == evictor)
+      } else {
+        libs
+      }
+    }
   }
 }

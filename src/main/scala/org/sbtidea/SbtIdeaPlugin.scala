@@ -1,8 +1,8 @@
 package org.sbtidea
 
+import android.AndroidSupport
 import sbt._
 import sbt.Load.BuildStructure
-import sbt.CommandSupport._
 import sbt.complete.Parsers._
 import java.io.File
 import collection.Seq
@@ -20,6 +20,7 @@ object SbtIdeaPlugin extends Plugin {
   val ideaSourcesClassifiers = SettingKey[Seq[String]]("idea-sources-classifiers")
   val ideaJavadocsClassifiers = SettingKey[Seq[String]]("idea-javadocs-classifiers")
   val ideaExtraFacets = SettingKey[NodeSeq]("idea-extra-facets")
+  val ideaIncludeScalaFacet = SettingKey[Boolean]("idea-include-scala-facet")
 
   override lazy val settings = Seq(
     Keys.commands += ideaCommand,
@@ -28,15 +29,18 @@ object SbtIdeaPlugin extends Plugin {
     ideaPackagePrefix := None,
     ideaSourcesClassifiers := Seq("sources"),
     ideaJavadocsClassifiers := Seq("javadoc"),
-    ideaExtraFacets := NodeSeq.Empty
+    ideaExtraFacets := NodeSeq.Empty,
+    ideaIncludeScalaFacet := true
   )
 
   private val NoClassifiers = "no-classifiers"
   private val SbtClassifiers = "sbt-classifiers"
   private val ReplaceLibsByModules = "replace-libs"
   private val NoFsc = "no-fsc"
+  private val NoTypeHighlighting = "no-type-highlighting"
+  private val NoSbtBuildModule = "no-sbt-build-module"
 
-  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc | Space ~> ReplaceLibsByModules).*
+  private val args = (Space ~> NoClassifiers | Space ~> SbtClassifiers | Space ~> NoFsc | Space ~> NoTypeHighlighting | Space ~> NoSbtBuildModule).*
 
   private lazy val ideaCommand = Command("gen-idea")(_ => args)(doCommand)
 
@@ -82,6 +86,9 @@ object SbtIdeaPlugin extends Plugin {
     val allProjectIds = projectList.values.map(_.id).toSet
     val subProjectsRaw = projectList.collect {
       case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds)
+    val allProjectIds = projectList.values.map(_.id).toSet
+    val subProjects = projectList.collect {
+      case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds, buildUnit.localBase)
     }.toList
 
     val subProjects = if (args.contains(ReplaceLibsByModules))
@@ -95,23 +102,22 @@ object SbtIdeaPlugin extends Plugin {
 
     val projectInfo = IdeaProjectInfo(buildUnit.localBase, name.getOrElse("Unknown"), subProjects, ideaLibs ::: scalaLibs)
 
-    val scalacOptions = extracted.runTask(Keys.scalacOptions in Configurations.Compile, state)._2
     val env = IdeaProjectEnvironment(projectJdkName = SystemProps.jdkName, javaLanguageLevel = SystemProps.languageLevel,
-      includeSbtProjectDefinitionModule = true, projectOutputPath = None, excludedFolders = "target",
+      includeSbtProjectDefinitionModule = !args.contains(NoSbtBuildModule), projectOutputPath = None, excludedFolders = Seq("target"),
       compileWithIdea = false, modulePath = ".idea_modules", useProjectFsc = !args.contains(NoFsc),
-      scalacOptions = scalacOptions)
+      enableTypeHighlighting = !args.contains(NoTypeHighlighting))
 
     val userEnv = IdeaUserEnvironment(false)
 
-    val parent = new ParentProjectIdeaModuleDescriptor(projectInfo, env, logger(state))
+    val parent = new ParentProjectIdeaModuleDescriptor(projectInfo, env, state.log)
     parent.save()
-    val rootFiles = new IdeaProjectDescriptor(projectInfo, env, logger(state))
+    val rootFiles = new IdeaProjectDescriptor(projectInfo, env, state.log)
     rootFiles.save()
 
     val imlDir = new File(projectInfo.baseDir, env.modulePath)
     imlDir.mkdirs()
     for (subProj <- subProjects) {
-      val module = new IdeaModuleDescriptor(imlDir, projectInfo.baseDir, subProj, env, userEnv, logger(state))
+      val module = new IdeaModuleDescriptor(imlDir, projectInfo.baseDir, subProj, env, userEnv, state.log)
       module.save()
     }
 
@@ -124,7 +130,7 @@ object SbtIdeaPlugin extends Plugin {
     //
     val sbtModuleSourceFiles: Seq[File] = {
       val sbtLibs: Seq[IdeaLibrary] = if (args.contains(SbtClassifiers)) {
-        EvaluateTask.evaluateTask(buildStruct, Keys.updateSbtClassifiers, state, projectList.head._1, false, EvaluateTask.SystemProcessors) match {
+        EvaluateTask(buildStruct, Keys.updateSbtClassifiers, state, projectList.head._1).map(_._2) match {
           case Some(Value(report)) => extractLibraries(report)
           case _ => Seq()
         }
@@ -137,8 +143,11 @@ object SbtIdeaPlugin extends Plugin {
       val buildDefinitionDir = new File(subProj.baseDir, "project")
       if (buildDefinitionDir.exists()) {
         val sbtDef = new SbtProjectDefinitionIdeaModuleDescriptor(subProj.name, imlDir, subProj.baseDir,
-         buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, logger(state))
-        sbtDef.save()
+         buildDefinitionDir, sbtScalaVersion, sbtVersion, sbtOut, buildUnit.classpath, sbtModuleSourceFiles, state.log)
+        if (args.contains(NoSbtBuildModule))
+          sbtDef.removeIfExists()
+        else
+          sbtDef.save()
       }
     }
 
@@ -160,24 +169,20 @@ object SbtIdeaPlugin extends Plugin {
   }
 
   def projectData(projectRef: ProjectRef, project: ResolvedProject, buildStruct: BuildStructure,
-                  state: State, args: Seq[String], allProjectIds: Set[String]): SubProjectInfo = {
+                  state: State, args: Seq[String], allProjectIds: Set[String], projectRoot: File): SubProjectInfo = {
 
-    def optionalSetting[A](key: ScopedSetting[A], pr: ProjectRef = projectRef) : Option[A] = key in pr get buildStruct.data
+    val settings = Settings(projectRef, buildStruct, state)
 
-    def logErrorAndFail(errorMessage: String): Nothing = {
-      logger(state).error(errorMessage);
-      throw new IllegalArgumentException()
-    }
+    // The SBT project name and id can be different. For single-module projects, we choose the name as the
+    // IDEA project name, and for multi-module projects, the id as it must be consistent with the value of SubProjectInfo#dependencyProjects.
+    val projectName = if (allProjectIds.size == 1) settings.setting(Keys.name, "Missing project name") else project.id
 
-    def setting[A](key: ScopedSetting[A], errorMessage: => String, pr: ProjectRef = projectRef) : A = {
-      optionalSetting(key, pr) getOrElse {
-        logErrorAndFail(errorMessage)
-      }
-    }
+    state.log.info("Trying to create an Idea module " + projectName)
 
-    def settingWithDefault[A](key: ScopedSetting[A], defaultValue: => A) : A = {
-      optionalSetting(key) getOrElse defaultValue
-    }
+    val ideaGroup = settings.optionalSetting(ideaProjectGroup)
+    val scalaInstance: ScalaInstance = settings.task(Keys.scalaInstance)
+    val scalacOptions: Seq[String] = settings.optionalTask(Keys.scalacOptions).getOrElse(Seq())
+    val baseDirectory = settings.setting(Keys.baseDirectory, "Missing base directory!")
 
     // The SBT project name and id can be different, we choose the id as the
     // IDEA project name. It must be consistent with the value of SubProjectInfo#dependencyProjects.
@@ -212,9 +217,9 @@ object SbtIdeaPlugin extends Plugin {
     val target = setting(Keys.target, "Missing target directory")
 
     def sourceDirectoriesFor(config: Configuration) = {
-      val hasSourceGen = optionalSetting(Keys.sourceGenerators in config).exists(!_.isEmpty)
+      val hasSourceGen = settings.optionalSetting(Keys.sourceGenerators in config).exists(!_.isEmpty)
       val managedSourceDirs = if (hasSourceGen) {
-        setting(Keys.managedSourceDirectories in config, "Missing managed source directories!")
+        settings.setting(Keys.managedSourceDirectories in config, "Missing managed source directories!")
       }
       else Seq.empty[File]
 
@@ -224,30 +229,38 @@ object SbtIdeaPlugin extends Plugin {
       // This doesn't fit so well in IDEA, it only has a concept of source directories, not source files.
       // So we begrudgingly add the root dir as a source dir *only* if we find some .scala files there.
       val baseDirs = {
-        val baseDir = setting(Keys.baseDirectory, "Missing base directory!")
+        val baseDir = settings.setting(Keys.baseDirectory, "Missing base directory!")
         val baseDirDirectlyContainsSources = baseDir.listFiles().exists(f => f.isFile && f.ext == "scala")
         if (config.name == "compile" && baseDirDirectlyContainsSources) Seq[File](baseDir) else Seq[File]()
       }
 
-      settingWithDefault(Keys.unmanagedSourceDirectories in config, Nil) ++ managedSourceDirs ++ baseDirs
+      settings.settingWithDefault(Keys.unmanagedSourceDirectories in config, Nil) ++ managedSourceDirs ++ baseDirs
     }
     def resourceDirectoriesFor(config: Configuration) = {
-      settingWithDefault(Keys.unmanagedResourceDirectories in config, Nil)
+      settings.settingWithDefault(Keys.unmanagedResourceDirectories in config, Nil)
     }
     def directoriesFor(config: Configuration) = {
       Directories(
         sourceDirectoriesFor(config),
         resourceDirectoriesFor(config),
-        setting(Keys.classDirectory in config, "Missing class directory!"))
+        settings.setting(Keys.classDirectory in config, "Missing class directory!"))
     }
     val compileDirectories: Directories = directoriesFor(Configurations.Compile)
     val testDirectories: Directories = directoriesFor(Configurations.Test).addSrc(sourceDirectoriesFor(Configurations.IntegrationTest)).addRes(resourceDirectoriesFor(Configurations.IntegrationTest))
-    val librariesExtractor = new SbtIdeaModuleMapping.LibrariesExtractor(buildStruct, state, projectRef,
-      logger(state), scalaInstance,
+    val librariesExtractor = new SbtIdeaModuleMapping.LibrariesExtractor(buildStruct, state, projectRef, scalaInstance,
       withClassifiers = if (args.contains(NoClassifiers)) None else {
-        Some((setting(ideaSourcesClassifiers, "Missing idea-sources-classifiers"), setting(ideaJavadocsClassifiers, "Missing idea-javadocs-classifiers")))
+        Some((settings.setting(ideaSourcesClassifiers, "Missing idea-sources-classifiers"), settings.setting(ideaJavadocsClassifiers, "Missing idea-javadocs-classifiers")))
       }
     )
+    val basePackage = settings.setting(ideaBasePackage, "missing IDEA base package")
+    val packagePrefix = settings.setting(ideaPackagePrefix, "missing package prefix")
+    val extraFacets = settings.settingWithDefault(ideaExtraFacets, NodeSeq.Empty)
+    val includeScalaFacet = settings.settingWithDefault(ideaIncludeScalaFacet, true)
+    def isAggregate(p: String) = allProjectIds.toSeq.contains(p)
+    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap { dep =>
+      Seq(Compile, Test) map { scope =>
+        (settings.setting(Keys.classDirectory in scope, "Missing class directory", dep.project), settings.setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
+      }
     val basePackage = setting(ideaBasePackage, "missing IDEA base package")
     val packagePrefix = setting(ideaPackagePrefix, "missing package prefix")
     val extraFacets = settingWithDefault(ideaExtraFacets, NodeSeq.Empty)
@@ -261,5 +274,18 @@ object SbtIdeaPlugin extends Plugin {
       testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets,
       artifactId
     )
+
+
+    val androidSupport = AndroidSupport(project, projectRoot, buildStruct, settings)
+    val dependencyLibs = librariesExtractor.allLibraries.map { lib: IdeaModuleLibRef =>
+      // If this is Android project, change scope of android.jar and Scala library to provided,
+      // to prevent IDEA from dexing them when running.
+      def shouldNotDex(libName: String) = libName.equals("android.jar") || libName.contains(":scala-library:")
+      if (androidSupport.isAndroidProject && shouldNotDex(lib.library.name)) lib.copy(config = IdeaLibrary.ProvidedScope) else lib
+    }
+    SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
+      testDirectories, dependencyLibs, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets, scalacOptions,
+      includeScalaFacet, androidSupport)
   }
+
 }

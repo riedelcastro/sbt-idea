@@ -1,5 +1,6 @@
 package org.sbtidea
 
+import android.AndroidSupport
 import java.io.File
 import xml.NodeSeq
 
@@ -16,7 +17,7 @@ object IdeaLibrary {
   case object ProvidedScope extends Scope("PROVIDED")
 }
 
-case class IdeaLibrary(name: String, classes: Set[File], javaDocs: Set[File], sources: Set[File]) {
+case class IdeaLibrary(id: String, name: String, evictionId: String, classes: Set[File], javaDocs: Set[File], sources: Set[File]) {
   def hasClasses = !classes.isEmpty
   def allFiles = classes ++ sources ++ javaDocs
 }
@@ -24,8 +25,8 @@ case class IdeaLibrary(name: String, classes: Set[File], javaDocs: Set[File], so
 case class IdeaModuleLibRef(config: IdeaLibrary.Scope, library: IdeaLibrary)
 
 case class Directories(sources: Seq[File], resources: Seq[File], outDir: File) {
-  def addSrc (moreSources: Seq[File]): Directories = Directories(sources ++ moreSources, resources, outDir)
-  def addRes (moreResources: Seq[File]): Directories = Directories(sources, resources ++ moreResources, outDir)
+  def addSrc(moreSources: Seq[File]): Directories = copy(sources = sources ++ moreSources)
+  def addRes(moreResources: Seq[File]): Directories = copy(resources = resources ++ moreResources)
 }
 
 case class ArtifactId(name:String, version:String, organization:String, scalaVersion:String) {
@@ -34,6 +35,9 @@ case class ArtifactId(name:String, version:String, organization:String, scalaVer
 
 case class SubProjectInfo(baseDir: File, name: String, dependencyProjects: List[String], classpathDeps: Seq[(File, Seq[File])], compileDirs: Directories,
                           testDirs: Directories, libraries: Seq[IdeaModuleLibRef], scalaInstance: ScalaInstance,
+                          ideaGroup: Option[String], webAppPath: Option[File], basePackage: Option[String],
+                          packagePrefix: Option[String], extraFacets: NodeSeq, scalacOptions: Seq[String],
+                          includeScalaFacet: Boolean, androidSupport: AndroidSupport)
                           ideaGroup: Option[String], webAppPath: Option[File], basePackage: Option[String],
                           packagePrefix: Option[String],
                           extraFacets: NodeSeq,
@@ -45,6 +49,5 @@ case class IdeaUserEnvironment(webFacet: Boolean)
 
 case class IdeaProjectEnvironment(projectJdkName :String, javaLanguageLevel: String,
                                   includeSbtProjectDefinitionModule: Boolean, projectOutputPath: Option[String],
-                                  excludedFolders: String, compileWithIdea: Boolean, modulePath: String, useProjectFsc: Boolean,
-                                   scalacOptions: Seq[String]) {
-}
+                                  excludedFolders: Seq[String], compileWithIdea: Boolean, modulePath: String, useProjectFsc: Boolean,
+                                  enableTypeHighlighting: Boolean)

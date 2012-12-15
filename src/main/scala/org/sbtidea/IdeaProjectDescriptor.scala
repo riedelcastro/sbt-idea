@@ -11,7 +11,7 @@ import xml.transform.{RewriteRule, RuleTransformer}
 import java.io.{FileOutputStream, File}
 import java.nio.channels.Channels
 import util.control.Exception._
-import xml.{Text, Elem, UnprefixedAttribute, XML, Node, Unparsed}
+import xml.{Text, Elem, XML, Node, Unparsed}
 
 object OutputUtil {
   def saveFile(dir: File, filename: String, node: xml.Node) { saveFile(new File(dir, filename), node) }
@@ -29,16 +29,7 @@ object OutputUtil {
 
 class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProjectEnvironment, val log: Logger) {
 
-  def projectRelative(file: File) = {
-    IO.relativize(projectInfo.baseDir, file.getCanonicalFile).map ("$PROJECT_DIR$/" + _).getOrElse(replaceUserHome(file.getCanonicalPath))
-  }
-
-  def replaceUserHome(path: String): String = {
-    val userHome = System.getProperty("user.home")
-    if (path.contains(userHome)) {
-      path.replace(userHome, "$USER_HOME$")
-    } else path
-  }
+  def projectRelative(file: File) = IOUtils.relativePath(projectInfo.baseDir, file, "$PROJECT_DIR$/")
 
   val vcsName = List("svn", "Git").foldLeft("") { (res, vcs) =>
     if (new File(projectInfo.baseDir, "." + vcs.toLowerCase).exists) vcs else res
@@ -47,7 +38,7 @@ class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProje
   private def moduleEntry(pathPrefix: String, moduleName: String, groupName: Option[String]) =
     <module fileurl={String.format("file://$PROJECT_DIR$%s/%s.iml", pathPrefix, moduleName)}
             filepath={String.format("$PROJECT_DIR$%s/%s.iml", pathPrefix, moduleName)}
-            group={groupName map xml.Text} />
+            group={groupName map(xml.Text(_))} />
 
   private def projectModuleManagerComponent: xml.Node =
     <component name="ProjectModuleManager">
@@ -74,30 +65,30 @@ class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProje
   private def project(inner: xml.Node*): xml.Node = <project version="4">{inner}</project>
 
   private def libraryTableComponent(library: IdeaLibrary): xml.Node = {
-    def jarUrl(file: File) = <root url={String.format("jar://%s!/", projectRelative(file))}/>;
+    def makeUrl(file: File) = {
+      val path = projectRelative(file)
+      val formatStr = if (path.endsWith(".jar")) "jar://%s!/" else "file://%s"
+      <root url={String.format(formatStr, path)}/>
+    }
     <component name="libraryTable">
       <library name={library.name}>
         <CLASSES>
-          {
-          library.classes.map(jarUrl(_))
-          }
+          { library.classes map makeUrl }
         </CLASSES>
         <JAVADOC>
-        {
-        library.javaDocs.map(jarUrl(_))
-        }
+          { library.javaDocs map makeUrl }
         </JAVADOC>
         <SOURCES>
-          {
-          library.sources.map(jarUrl(_))
-          }
+          { library.sources map makeUrl }
         </SOURCES>
       </library>
     </component>
   }
 
   private def projectRootManagerComponent: xml.Node =
-      <component name="ProjectRootManager" version="2" languageLevel={env.javaLanguageLevel} assert-keyword="true" jdk-15="true" project-jdk-name={env.projectJdkName} project-jdk-type="JavaSDK" />
+      <component name="ProjectRootManager" version="2" languageLevel={env.javaLanguageLevel} assert-keyword="true" jdk-15="true" project-jdk-name={env.projectJdkName} project-jdk-type="JavaSDK">
+        <output url="file://$PROJECT_DIR$/target/idea_output" />
+      </component>
 
   private def projectDetailsComponent: xml.Node =
     <component name="ProjectDetails">
@@ -129,7 +120,8 @@ class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProje
         "vcs.xml" -> Some(project(vcsComponent)),
         "projectCodeStyle.xml" -> Some(defaultProjectCodeStyleXml),
         "encodings.xml" -> Some(defaultEncodingsXml),
-        "scala_compiler.xml" -> (if (env.useProjectFsc) Some(scalaCompilerXml) else None)
+        "scala_compiler.xml" -> (if (env.useProjectFsc) Some(scalaCompilerXml) else None),
+        "highlighting.xml" -> (if (env.enableTypeHighlighting) Some(highlightingXml) else None)
       ) foreach {
         case (fileName, Some(xmlNode)) if (!configFile(fileName).exists) =>  saveFile(configDir, fileName, xmlNode)
         case _ =>
@@ -139,7 +131,7 @@ class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProje
       librariesDir.mkdirs
       for (ideaLib <- projectInfo.ideaLibs) {
         // MUST all be _
-        val filename = ideaLib.name.replace('.', '_').replace('-', '_') + ".xml"
+        val filename = ideaLib.name.replaceAll("[:\\.\\s-]", "_") + ".xml"
         saveFile(librariesDir, filename, libraryTableComponent(ideaLib))
       }
 
@@ -147,36 +139,39 @@ class IdeaProjectDescriptor(val projectInfo: IdeaProjectInfo, val env: IdeaProje
     } else log.error("Skipping .idea creation for " + projectInfo.baseDir + " since directory does not exist")
   }
 
-  val scalaCompilerXml = {
-    <project version="4">
-      <component name="ScalacSettings">
-          <option name="COMPILER_LIBRARY_NAME" value={projectInfo.childProjects.headOption.
-          map(p => SbtIdeaModuleMapping.toIdeaLib(p.scalaInstance).name).getOrElse("")}/>
-          <option name="COMPILER_LIBRARY_LEVEL" value="Project"/>
-      </component>
-    </project>
-  }
+  val scalaCompilerXml = project(
+    <component name="ScalacSettings">
+      <option name="COMPILER_LIBRARY_NAME" value={projectInfo.childProjects.headOption.
+      map(p => SbtIdeaModuleMapping.toIdeaLib(p.scalaInstance).name).getOrElse("")}/>
+      <option name="COMPILER_LIBRARY_LEVEL" value="Project"/>
+    </component>
+  )
 
-  val defaultProjectCodeStyleXml =
-    <project version="4">
-      <component name="CodeStyleSettingsManager">
-        <option name="PER_PROJECT_SETTINGS">
-          <value>
-            <option name="LINE_SEPARATOR" value={Unparsed("&#10;")} />
-          </value>
-        </option>
-        <option name="USE_PER_PROJECT_SETTINGS" value="true" />
-      </component>
-    </project>
+  val highlightingXml = project(
+    <component name="HighlightingAdvisor">
+      <option name="SUGGEST_TYPE_AWARE_HIGHLIGHTING" value="false"/>
+      <option name="TYPE_AWARE_HIGHLIGHTING_ENABLED" value="true"/>
+    </component>
+  )
 
-  val defaultEncodingsXml =
-    <project version="4">
-      <component name="Encoding" useUTFGuessing="true" native2AsciiForPropertiesFiles="false" defaultCharsetForPropertiesFiles="ISO-8859-1">
-        <file url="PROJECT" charset="UTF-8" />
-      </component>
-    </project>
+  val defaultProjectCodeStyleXml = project(
+    <component name="CodeStyleSettingsManager">
+      <option name="PER_PROJECT_SETTINGS">
+        <value>
+          <option name="LINE_SEPARATOR" value={Unparsed("&#10;")}/>
+        </value>
+      </option>
+      <option name="USE_PER_PROJECT_SETTINGS" value="true"/>
+    </component>
+  )
 
-  val defaultMiscXml = <project version="4"> {projectRootManagerComponent} </project>
+  val defaultEncodingsXml = project(
+    <component name="Encoding" useUTFGuessing="true" native2AsciiForPropertiesFiles="false" defaultCharsetForPropertiesFiles="ISO-8859-1">
+      <file url="PROJECT" charset="UTF-8"/>
+    </component>
+  )
+
+  val defaultMiscXml = project(projectRootManagerComponent)
 
   private def miscXml(configDir: File): Option[Node] = try {
     Some(XML.loadFile(new File(configDir, "misc.xml")))

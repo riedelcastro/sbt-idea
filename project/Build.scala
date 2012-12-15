@@ -7,8 +7,8 @@ object SbtIdeaBuild extends Build {
   lazy val mainSettings: Seq[Project.Setting[_]] = Defaults.defaultSettings ++ ScriptedPlugin.scriptedSettings ++ Seq(
     sbtPlugin := true,
     organization := "com.github.mpeltonen",
-    name := "sbt-idea-rc",
-    version := "1.2.0-SNAPSHOT",
+    name := "sbt-idea",
+    version := "1.3.0-SNAPSHOT",
     publishTo := Some(Resolver.file("Github Pages", Path.userHome / "git" / "mpeltonen.github.com" / "maven" asFile)(Patterns(true, Resolver.mavenStyleBasePattern))),
     publishTo <<= version { (v: String) =>
       val nexus = "https://oss.sonatype.org/"
@@ -19,14 +19,15 @@ object SbtIdeaBuild extends Build {
     publishArtifact in Test := false,
     pomIncludeRepository := (_ => false),
     pomExtra := extraPom,
-    resolvers += Classpaths.typesafeSnapshots,
+    resolvers ++= Seq(
+      Classpaths.typesafeSnapshots,
+      "Github Repo" at "http://mpeltonen.github.com/maven"
+    ),
     scalacOptions ++= Seq("-deprecation", "-unchecked"),
-    libraryDependencies ++= scriptedTestHelperDependencies
-  )
-
-  private def scriptedTestHelperDependencies = Seq(
-    "commons-io" % "commons-io" % "2.0.1"
-  )
+    libraryDependencies ++= Seq(
+      "commons-io" % "commons-io" % "2.0.1"
+    )
+  ) ++ addSbtPlugin("com.github.mpeltonen" % "sbt-android-plugin" % "0.6.3-SNAPSHOT" % "provided")
 
   def extraPom = (
     <url>http://your.project.url</url>

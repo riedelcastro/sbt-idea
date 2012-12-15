@@ -7,7 +7,11 @@ object SbtIdeaModuleMapping {
   type JavadocClassifier = String
 
   def toIdeaLib(instance: ScalaInstance) = {
-    IdeaLibrary("scala-" + instance.version, Set(instance.libraryJar, instance.compilerJar),
+    val coreJars = instance.jars.filter { jar =>
+      Seq("compiler", "library", "reflect").map("scala-%s.jar" format _).exists(_ == jar.getName)
+    }.toSet
+    val id = "scala-" + instance.version
+    IdeaLibrary(id, "SBT: scala:" + instance.version, id, coreJars,
       instance.extraJars.filter(_.getAbsolutePath.endsWith("docs.jar")).toSet,
       instance.extraJars.filter(_.getAbsolutePath.endsWith("-sources.jar")).toSet)
   }
@@ -21,13 +25,13 @@ object SbtIdeaModuleMapping {
    *   * `updateSbtClassifiers`
    *   * `unmanagedClasspath`
    */
-  final class LibrariesExtractor(buildStruct: Load.BuildStructure, state: State, projectRef: ProjectRef, logger: Logger,
+  final class LibrariesExtractor(buildStruct: Load.BuildStructure, state: State, projectRef: ProjectRef,
                                  scalaInstance: ScalaInstance, withClassifiers: Option[(Seq[SourcesClassifier], Seq[JavadocClassifier])]) {
 
     def allLibraries: Seq[IdeaModuleLibRef] = managedLibraries ++ unmanagedLibraries
 
     /**
-     * Creates an IDEA library entry for each entry in `externalDependencyClasspath` in `Test` and `Compile.
+     * Creates an IDEA library entry for each entry in `externalDependencyClasspath` in `Test` and `Compile`.
      *
      * The result of `update`, `updateClassifiers`, and is used to find the location of the library,
      * by default in $HOME/.ivy2/cache
@@ -35,7 +39,7 @@ object SbtIdeaModuleMapping {
     def managedLibraries: Seq[IdeaModuleLibRef] = {
       val deps = evaluateTask(Keys.externalDependencyClasspath in Configurations.Test) match {
         case Some(Value(deps)) => deps
-        case _ => logger.error("Failed to obtain dependency classpath"); throw new IllegalArgumentException()
+        case _ => state.log.error("Failed to obtain dependency classpath"); throw new IllegalArgumentException()
       }
       val libraries: Seq[(IdeaModuleLibRef, ModuleID)] = evaluateTask(Keys.update) match {
 
@@ -56,7 +60,7 @@ object SbtIdeaModuleMapping {
     }
 
     /**
-     * Creates an IDEA library entry for each entry in `unmanagedClasspath` in `Test` and `Compile.
+     * Creates an IDEA library entry for each entry in `unmanagedClasspath` in `Test`, `Compile` and `Runtime`.
      *
      * If the entry is both in the compile and test scopes, it is only added to the compile scope.
      *
@@ -78,27 +82,29 @@ object SbtIdeaModuleMapping {
               f = attributedFile.data
               if Seq("sources", "javadoc").forall(classifier => !f.name.endsWith("-%s.jar".format(classifier)))
               scope = toScope(config.name)
-              sources = classifier(f, "sources").toSet
-              javadocs = classifier(f, "javadoc").toSet
-              ideaLib = IdeaLibrary(f.getName, classes = Set(f), sources = sources, javaDocs = javadocs)
+              sources = if (f.name.endsWith(".jar")) classifier(f, "sources").toSet else Set[File]()
+              javadocs = if (f.name.endsWith(".jar")) classifier(f, "javadoc").toSet else Set[File]()
+              ideaLib = IdeaLibrary(f.getName, f.getName, f.getName, classes = Set(f), sources = sources, javaDocs = javadocs)
             } yield IdeaModuleLibRef(scope, ideaLib)
           case _ => Seq()
         }
       }
 
+      def isIncludedIn(libs: Seq[IdeaModuleLibRef]) = (lib: IdeaModuleLibRef) => libs.exists(_.library == lib.library)
       val compileUnmanagedLibraries = unmanagedLibrariesFor(Configurations.Compile)
-      val testUnmanagedLibraries = unmanagedLibrariesFor(Configurations.Test).filterNot(libRef => compileUnmanagedLibraries.exists(_.library == libRef.library))
-      compileUnmanagedLibraries ++ testUnmanagedLibraries
+      val testUnmanagedLibraries = unmanagedLibrariesFor(Configurations.Test).filterNot(isIncludedIn(compileUnmanagedLibraries))
+      val runtimeUnmanagedLibraries = unmanagedLibrariesFor(Configurations.Runtime).filterNot(isIncludedIn(compileUnmanagedLibraries)).filterNot(isIncludedIn(testUnmanagedLibraries))
+      compileUnmanagedLibraries ++ testUnmanagedLibraries ++ runtimeUnmanagedLibraries
     }
 
     private def evaluateTask[T](taskKey: sbt.Project.ScopedKey[sbt.Task[T]]) =
-      EvaluateTask.evaluateTask(buildStruct, taskKey, state, projectRef, false, EvaluateTask.SystemProcessors)
+      EvaluateTask(buildStruct, taskKey, state, projectRef).map(_._2)
   }
 
   private def equivModule(m1: ModuleID, m2: ModuleID, scalaVersion: String) = {
-    def name(m: ModuleID): String = if (m.crossVersion) m.name + "_" + scalaVersion else m.name
+    val crossName: ModuleID => ModuleID = CrossVersion(scalaVersion, CrossVersion.binaryScalaVersion(scalaVersion))
 
-    m1.organization == m2.organization && name(m1) == name(m2)
+    m1.organization == m2.organization && crossName(m1).name == crossName(m2).name
   }
 
   private def ideaLibFromModule(configuration: String, module: ModuleID, artifacts: Seq[(Artifact, File)], classifiers: Option[(Seq[SourcesClassifier], Seq[JavadocClassifier])]): IdeaLibrary = {
@@ -116,12 +122,16 @@ object SbtIdeaModuleMapping {
       case Some(classifiers) => classifiers.foldLeft(Seq[File]()) { (acc, classifier) => acc ++ findByClassifier(Some(classifier)) }
       case None => Seq[File]()
     }
-    val name = module.organization + "_" + module.name + "_" + module.revision + (if (!configuration.isEmpty) "_" + configuration else "")
-      IdeaLibrary(name,
-        classes = findClasses.toSet,
-        sources = findByClassifiers(classifiers.map(_._1)).toSet,
-        javaDocs = findByClassifiers(classifiers.map(_._2)).toSet
-      )
+    val id = module.organization + "_" + module.name + "_" + module.revision + (if (configuration.nonEmpty) "_" + configuration else "")
+    val name = "SBT: " + module.organization + ":" + module.name + ":" + module.revision + (if (configuration.nonEmpty) ":" + configuration else "")
+    val artifactId = module.organization + ":" + module.name
+    IdeaLibrary(id,
+      name,
+      artifactId,
+      classes = findClasses.toSet,
+      sources = findByClassifiers(classifiers.map(_._1)).toSet,
+      javaDocs = findByClassifiers(classifiers.map(_._2)).toSet
+    )
   }
 
   private def toScope(conf: String) = {
@@ -160,7 +170,7 @@ object SbtIdeaModuleMapping {
     //mapToIdeaModuleLibs and remove the hardcoded configurations. Something like the following would be enough:
     //report.configurations.flatMap(configReport => mapToIdeaModuleLibs(configReport.configuration, configReport.modules, deps))
 
-    Seq("compile", "runtime", "test", "provided").flatMap(report.configuration(_)).foldLeft(Seq[(IdeaModuleLibRef, ModuleID)]()) {
+    Seq("compile", "provided", "test", "runtime").flatMap(report.configuration(_)).foldLeft(Seq[(IdeaModuleLibRef, ModuleID)]()) {
       (acc, configReport) =>
         def processedArtifacts = acc.flatMap(_._1.library.allFiles)
         def alreadyIncludedJar(f: File): Boolean = { processedArtifacts.exists(_.getAbsolutePath == f.getAbsolutePath) }

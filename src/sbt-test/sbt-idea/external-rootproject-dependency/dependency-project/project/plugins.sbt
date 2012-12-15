@@ -1,1 +1,2 @@
-addSbtPlugin("com.github.mpeltonen" % "sbt-idea" % "")
+addSbtPlugin("com.github.mpeltonen" % "sbt-idea" % "1.3.0-SNAPSHOT")
+
