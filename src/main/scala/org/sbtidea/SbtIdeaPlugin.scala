@@ -85,9 +85,6 @@ object SbtIdeaPlugin extends Plugin {
 
     val allProjectIds = projectList.values.map(_.id).toSet
     val subProjectsRaw = projectList.collect {
-      case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds)
-    val allProjectIds = projectList.values.map(_.id).toSet
-    val subProjects = projectList.collect {
       case (projRef, project) if (!ignoreModule(projRef)) => projectData(projRef, project, buildStruct, state, args, allProjectIds, buildUnit.localBase)
     }.toList
 
@@ -162,7 +159,7 @@ object SbtIdeaPlugin extends Plugin {
       val subprojectsToUseInstead = replaceable.map(l => name2project(l.library.name).head.name).toList
       val newSubProject = sub.copy(libraries = nonreplacable, dependencyProjects = sub.dependencyProjects ++ subprojectsToUseInstead)
       for (lib <- replaceable) {
-        logger(state).info("Replacing library %s with module %s".format(lib.library.name,name2project(lib.library.name).head.name))
+        state.log.info("Replacing library %s with module %s".format(lib.library.name,name2project(lib.library.name).head.name))
       }
       newSubProject
     }
@@ -177,44 +174,20 @@ object SbtIdeaPlugin extends Plugin {
     // IDEA project name, and for multi-module projects, the id as it must be consistent with the value of SubProjectInfo#dependencyProjects.
     val projectName = if (allProjectIds.size == 1) settings.setting(Keys.name, "Missing project name") else project.id
 
+    //Needed for replacing dependencies with sub-projects
+    val artifactId = ArtifactId(
+      name = settings.setting(Keys.artifact, "Artifact not defined").name,
+      version = settings.setting(Keys.version, "Version not defined"),
+      organization = settings.setting(Keys.organization, "Org not defined"),
+      scalaVersion = settings.setting(Keys.scalaVersion, "Scala version not defined")
+    )
+
     state.log.info("Trying to create an Idea module " + projectName)
 
     val ideaGroup = settings.optionalSetting(ideaProjectGroup)
     val scalaInstance: ScalaInstance = settings.task(Keys.scalaInstance)
     val scalacOptions: Seq[String] = settings.optionalTask(Keys.scalacOptions).getOrElse(Seq())
     val baseDirectory = settings.setting(Keys.baseDirectory, "Missing base directory!")
-
-    // The SBT project name and id can be different, we choose the id as the
-    // IDEA project name. It must be consistent with the value of SubProjectInfo#dependencyProjects.
-    val projectName = project.id
-
-    val artifactId = ArtifactId(
-      name = setting(Keys.artifact, "Artifact not defined").name,
-      version = setting(Keys.version, "Version not defined"),
-      organization = setting(Keys.organization, "Org not defined"),
-      scalaVersion = setting(Keys.scalaVersion, "Scala version not defined")
-    )
-
-    logger(state).info("Trying to create an Idea module " + projectName)
-
-    val ideaGroup = optionalSetting(ideaProjectGroup)
-    val scalaInstance: ScalaInstance = {
-      val missingScalaInstanceMessage = "Missing scala instance"
-      // Compatibility from SBT 0.10.1 -> 0.10.2-SNAPSHOT
-      (Keys.scalaInstance: Any) match {
-        case k: ScopedSetting[_] =>
-          setting(k.asInstanceOf[ScopedSetting[ScalaInstance]], missingScalaInstanceMessage)
-        case t: TaskKey[_] =>
-          val scalaInstanceTaskKey = t.asInstanceOf[TaskKey[ScalaInstance]]
-          EvaluateTask.evaluateTask(buildStruct, scalaInstanceTaskKey, state, projectRef, false, EvaluateTask.SystemProcessors) match {
-            case Some(Value(instance)) => instance
-            case _ => logErrorAndFail(missingScalaInstanceMessage)
-          }
-      }
-    }
-
-    val baseDirectory = setting(Keys.baseDirectory, "Missing base directory!")
-    val target = setting(Keys.target, "Missing target directory")
 
     def sourceDirectoriesFor(config: Configuration) = {
       val hasSourceGen = settings.optionalSetting(Keys.sourceGenerators in config).exists(!_.isEmpty)
@@ -261,19 +234,7 @@ object SbtIdeaPlugin extends Plugin {
       Seq(Compile, Test) map { scope =>
         (settings.setting(Keys.classDirectory in scope, "Missing class directory", dep.project), settings.setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
       }
-    val basePackage = setting(ideaBasePackage, "missing IDEA base package")
-    val packagePrefix = setting(ideaPackagePrefix, "missing package prefix")
-    val extraFacets = settingWithDefault(ideaExtraFacets, NodeSeq.Empty)
-    def isAggregate(p: String) = allProjectIds.toSeq.contains(p)
-    val classpathDeps = project.dependencies.filterNot(d => isAggregate(d.project.project)).flatMap { dep =>
-      Seq(Compile, Test) map { scope =>
-        (setting(Keys.classDirectory in scope, "Missing class directory", dep.project), setting(Keys.sourceDirectories in scope, "Missing source directory", dep.project))
-      }
     }
-    SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
-      testDirectories, librariesExtractor.allLibraries, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets,
-      artifactId
-    )
 
 
     val androidSupport = AndroidSupport(project, projectRoot, buildStruct, settings)
@@ -285,7 +246,7 @@ object SbtIdeaPlugin extends Plugin {
     }
     SubProjectInfo(baseDirectory, projectName, project.uses.map(_.project).filter(isAggregate).toList, classpathDeps, compileDirectories,
       testDirectories, dependencyLibs, scalaInstance, ideaGroup, None, basePackage, packagePrefix, extraFacets, scalacOptions,
-      includeScalaFacet, androidSupport)
+      includeScalaFacet, androidSupport,artifactId)
   }
 
 }
