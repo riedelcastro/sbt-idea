@@ -8,12 +8,12 @@ object SbtIdeaModuleMapping {
 
   def toIdeaLib(instance: ScalaInstance) = {
     val coreJars = instance.jars.filter { jar =>
-      Seq("compiler", "library", "reflect").map("scala-%s.jar" format _).exists(_ == jar.getName)
+      Seq("compiler", "library", "reflect").exists(x => jar.getName.contains(x))
     }.toSet
     val id = "scala-" + instance.version
     IdeaLibrary(id, "SBT: scala:" + instance.version, id, coreJars,
-      instance.extraJars.filter(_.getAbsolutePath.endsWith("docs.jar")).toSet,
-      instance.extraJars.filter(_.getAbsolutePath.endsWith("-sources.jar")).toSet)
+      instance.allJars.filter(_.getAbsolutePath.endsWith("docs.jar")).toSet,
+      instance.allJars.filter(_.getAbsolutePath.endsWith("-sources.jar")).toSet)
   }
 
   /**
@@ -25,7 +25,7 @@ object SbtIdeaModuleMapping {
    *   * `updateSbtClassifiers`
    *   * `unmanagedClasspath`
    */
-  final class LibrariesExtractor(buildStruct: Load.BuildStructure, state: State, projectRef: ProjectRef,
+  final class LibrariesExtractor(buildStruct: BuildStructure, state: State, projectRef: ProjectRef,
                                  scalaInstance: ScalaInstance, withClassifiers: Option[(Seq[SourcesClassifier], Seq[JavadocClassifier])]) {
 
     def allLibraries: Seq[IdeaModuleLibRef] = managedLibraries ++ unmanagedLibraries
@@ -97,7 +97,7 @@ object SbtIdeaModuleMapping {
       compileUnmanagedLibraries ++ testUnmanagedLibraries ++ runtimeUnmanagedLibraries
     }
 
-    private def evaluateTask[T](taskKey: sbt.Project.ScopedKey[sbt.Task[T]]) =
+    private def evaluateTask[T](taskKey: sbt.Def.ScopedKey[sbt.Task[T]]) =
       EvaluateTask(buildStruct, taskKey, state, projectRef).map(_._2)
   }
 
@@ -170,7 +170,7 @@ object SbtIdeaModuleMapping {
     //mapToIdeaModuleLibs and remove the hardcoded configurations. Something like the following would be enough:
     //report.configurations.flatMap(configReport => mapToIdeaModuleLibs(configReport.configuration, configReport.modules, deps))
 
-    Seq("compile", "provided", "test", "runtime").flatMap(report.configuration(_)).foldLeft(Seq[(IdeaModuleLibRef, ModuleID)]()) {
+    Seq("compile", "provided", "runtime", "test", "optional").flatMap(report.configuration(_)).foldLeft(Seq[(IdeaModuleLibRef, ModuleID)]()) {
       (acc, configReport) =>
         def processedArtifacts = acc.flatMap(_._1.library.allFiles)
         def alreadyIncludedJar(f: File): Boolean = { processedArtifacts.exists(_.getAbsolutePath == f.getAbsolutePath) }

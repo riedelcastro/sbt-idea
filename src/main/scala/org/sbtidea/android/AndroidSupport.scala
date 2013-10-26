@@ -5,23 +5,26 @@ import xml.NodeSeq
 import sbt._
 import java.io.{FileReader, File}
 import org.sbtidea.{Settings, IOUtils}
-import sbt.Load.BuildStructure
 import org.sbtidea.Settings
 import java.util.Properties
 
 case class AndroidSupport(projectDefinition: ProjectDefinition[ProjectRef], projectRoot: File, buildStruct: BuildStructure, settings: Settings) {
   def isAndroidProject: Boolean = allCatch.opt {
     val settingLabelsInUse = projectDefinition.settings.map(_.key.key.label)
-    settingLabelsInUse.contains(org.scalasbt.androidplugin.AndroidKeys.platformName.key.label)
+    // Disable until we have sbt 0.13 version of the plugin
+    // settingLabelsInUse.contains(sbtandroid.AndroidKeys.platformName.key.label)
+    false
   }.getOrElse(false)
 
   def facet: NodeSeq = {
     if (!isAndroidProject) NodeSeq.Empty
     else {
-      import org.scalasbt.androidplugin.AndroidKeys._
+      NodeSeq.Empty
+      /*
+      import sbtandroid.AndroidKeys._
 
       def projectRelativePath(f: File) = IOUtils.relativePath(projectRoot, f, "/../")
-      val genFolder = projectRelativePath(setting(Keys.target in Android) / "gen")
+      val genFolder = projectRelativePath(setting(managedJavaPath in Android))
       val manifest: File = settings.optionalSetting(manifestTemplatePath in Android).getOrElse(settings.task(manifestPath in Android).head)
       // Run typed resources generation at this point, if defined, so that the project is immediately compilable in IDEA.
       settings.optionalTask(generateTypedResources)
@@ -54,6 +57,7 @@ case class AndroidSupport(projectDefinition: ProjectDefinition[ProjectRef], proj
           <additionalNativeLibs />
         </configuration>
       </facet>
+      */
     }
   }
 
@@ -62,9 +66,12 @@ case class AndroidSupport(projectDefinition: ProjectDefinition[ProjectRef], proj
   private def setting[A](key: SettingKey[A]): A = settings.setting(key, "Missing setting: %s".format(key.key.label))
 
   private lazy val platformVersion = {
+    throw new UnsupportedOperationException
+    /*
     import org.scalasbt.androidplugin.AndroidKeys._
     val props = new Properties()
     props.load(new FileReader((setting(platformPath in Android) / "source.properties").asFile))
     props.getProperty("Platform.Version")
+    */
   }
 }
