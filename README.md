@@ -18,9 +18,3 @@ object Workspace extends Build {
 }
 ```
 
-Running `sbt gen-idea` in this project will create an intellij project file, as before. However, if project
-`p1` has a library dependency to the artifact of `p2` (as determined by their name, org, scala version and version
-settings), then the Intellij project will have a module dependency in module p1 to module p2, as opposed to
-a library dependency (to the library jar in the local ivy repo).
-
-

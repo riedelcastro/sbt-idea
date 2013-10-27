@@ -2,7 +2,6 @@ package org.sbtidea
 
 import android.AndroidSupport
 import sbt._
-import sbt.Load.BuildStructure
 import sbt.complete.Parsers._
 import java.io.File
 import collection.Seq
@@ -19,18 +18,20 @@ object SbtIdeaPlugin extends Plugin {
                                                      "The package prefix for source directories.")
   val ideaSourcesClassifiers = SettingKey[Seq[String]]("idea-sources-classifiers")
   val ideaJavadocsClassifiers = SettingKey[Seq[String]]("idea-javadocs-classifiers")
+  val ideaExcludeFolders = SettingKey[Seq[String]]("idea-exclude-folders")
   val ideaExtraFacets = SettingKey[NodeSeq]("idea-extra-facets")
   val ideaIncludeScalaFacet = SettingKey[Boolean]("idea-include-scala-facet")
 
   override lazy val settings = Seq(
     Keys.commands += ideaCommand,
-    ideaProjectName := "IdeaProject",
-    ideaBasePackage := None,
-    ideaPackagePrefix := None,
-    ideaSourcesClassifiers := Seq("sources"),
-    ideaJavadocsClassifiers := Seq("javadoc"),
-    ideaExtraFacets := NodeSeq.Empty,
-    ideaIncludeScalaFacet := true
+    ideaProjectName <<= ideaProjectName ?? "IdeaProject",
+    ideaBasePackage <<= ideaBasePackage ?? None,
+    ideaPackagePrefix <<= ideaPackagePrefix ?? None,
+    ideaSourcesClassifiers <<= ideaSourcesClassifiers ?? Seq("sources"),
+    ideaJavadocsClassifiers <<= ideaJavadocsClassifiers ?? Seq("javadoc"),
+    ideaExcludeFolders <<= ideaExcludeFolders ?? Nil,
+    ideaExtraFacets <<= ideaExtraFacets ?? NodeSeq.Empty,
+    ideaIncludeScalaFacet <<= ideaIncludeScalaFacet ?? true
   )
 
   private val NoClassifiers = "no-classifiers"
@@ -99,8 +100,10 @@ object SbtIdeaPlugin extends Plugin {
 
     val projectInfo = IdeaProjectInfo(buildUnit.localBase, name.getOrElse("Unknown"), subProjects, ideaLibs ::: scalaLibs)
 
+    val excludeFolders = (ideaExcludeFolders in extracted.currentRef get buildStruct.data).getOrElse(Nil) :+ "target"
+
     val env = IdeaProjectEnvironment(projectJdkName = SystemProps.jdkName, javaLanguageLevel = SystemProps.languageLevel,
-      includeSbtProjectDefinitionModule = !args.contains(NoSbtBuildModule), projectOutputPath = None, excludedFolders = Seq("target"),
+      includeSbtProjectDefinitionModule = !args.contains(NoSbtBuildModule), projectOutputPath = None, excludedFolders = excludeFolders,
       compileWithIdea = false, modulePath = ".idea_modules", useProjectFsc = !args.contains(NoFsc),
       enableTypeHighlighting = !args.contains(NoTypeHighlighting))
 
@@ -188,13 +191,17 @@ object SbtIdeaPlugin extends Plugin {
 
     val ideaGroup = settings.optionalSetting(ideaProjectGroup)
     val scalaInstance: ScalaInstance = settings.task(Keys.scalaInstance)
-    val scalacOptions: Seq[String] = settings.optionalTask(Keys.scalacOptions).getOrElse(Seq())
+    val scalacOptions: Seq[String] = settings.optionalTask(Keys.scalacOptions in Compile).getOrElse(Seq())
     val baseDirectory = settings.setting(Keys.baseDirectory, "Missing base directory!")
 
     def sourceDirectoriesFor(config: Configuration) = {
       val hasSourceGen = settings.optionalSetting(Keys.sourceGenerators in config).exists(!_.isEmpty)
       val managedSourceDirs = if (hasSourceGen) {
-        settings.setting(Keys.managedSourceDirectories in config, "Missing managed source directories!")
+        state.log.info("Running " + config.name + ":" + Keys.managedSources.key.label + " ...")
+        EvaluateTask(buildStruct, Keys.managedSources in config, state, projectRef)
+        val managedSourceRoots = settings.setting(Keys.managedSourceDirectories in config, "Missing managed source directories!")
+        def listSubdirectories(f: File) = Option(f.listFiles()).map(_.toSeq.filter(_.isDirectory)).getOrElse(Seq.empty[File])
+        managedSourceRoots.flatMap(listSubdirectories)
       }
       else Seq.empty[File]
 

@@ -7,8 +7,10 @@ object SbtIdeaBuild extends Build {
   lazy val mainSettings: Seq[Project.Setting[_]] = Defaults.defaultSettings ++ ScriptedPlugin.scriptedSettings ++ Seq(
     sbtPlugin := true,
     organization := "com.github.mpeltonen",
-    name := "sbt-idea-rc",
-    version := "1.3.0-SNAPSHOT",
+    name := "sbt-idea",
+    version := "1.6.0-SNAPSHOT",
+    sbtVersion in Global := "0.13.0",
+    scalaVersion in Global := "2.10.3",
     publishTo := Some(Resolver.file("Github Pages", Path.userHome / "git" / "mpeltonen.github.com" / "maven" asFile)(Patterns(true, Resolver.mavenStyleBasePattern))),
     publishTo <<= version { (v: String) =>
       val nexus = "https://oss.sonatype.org/"
@@ -21,13 +23,13 @@ object SbtIdeaBuild extends Build {
     pomExtra := extraPom,
     resolvers ++= Seq(
       Classpaths.typesafeSnapshots,
-      "Github Repo" at "http://mpeltonen.github.com/maven"
+      Resolver.url("scalasbt snapshots", new URL("http://scalasbt.artifactoryonline.com/scalasbt/sbt-plugin-snapshots"))(Resolver.ivyStylePatterns)
     ),
-    scalacOptions ++= Seq("-deprecation", "-unchecked"),
+    scalacOptions ++= Seq("-deprecation", "-unchecked", "-feature"),
     libraryDependencies ++= Seq(
       "commons-io" % "commons-io" % "2.0.1"
     )
-  ) ++ addSbtPlugin("com.github.mpeltonen" % "sbt-android-plugin" % "0.6.3-SNAPSHOT" % "provided")
+  ) // ++ addSbtPlugin("org.scala-sbt" % "sbt-android" % "0.6.4" % "provided")
 
   def extraPom = (
     <url>http://your.project.url</url>
